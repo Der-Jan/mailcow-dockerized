@@ -307,6 +307,7 @@ services:
         - ${IPV4_NETWORK:-172.22.1}.254
       networks:
         mailcow-network:
+          ipv4_address: ${IPV4_NETWORK:-172.22.1}.22
           aliases:
             - nginx
 
