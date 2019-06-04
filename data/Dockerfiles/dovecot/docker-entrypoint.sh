@@ -149,6 +149,8 @@ rm -rf /var/vmail/mailcow.local/*
 
 # Create random master for SOGo sieve features
 RAND_USER=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 16 | head -n 1)
+# Fixed user for replication
+RAND_USER=sievemgr
 RAND_PASS=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 24 | head -n 1)
 
 echo ${RAND_USER}@mailcow.local:{SHA1}$(echo -n ${RAND_PASS} | sha1sum | awk '{print $1}') > /usr/local/etc/dovecot/dovecot-master.passwd
