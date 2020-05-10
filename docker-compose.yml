@@ -312,6 +312,15 @@ services:
           ipv4_address: ${IPV4_NETWORK:-172.22.1}.22
           aliases:
             - nginx
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.moo.rule=Host(`${MAILCOW_HOSTNAME}`)
+        # Creates a service called "moo" for the container, and specifies which internal port of the container
+        #   should traefik route the incoming data to.
+        - traefik.http.services.moo.loadbalancer.server.port=80
+        # Specifies which entrypoint (external port) should traefik listen to, for this container.
+        #   websecure being port 443, check the traefik.toml file liked above.
+        - traefik.http.routers.moo.entrypoints=websecure
 
     acme-mailcow:
       depends_on:
