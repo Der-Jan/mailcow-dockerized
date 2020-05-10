@@ -23,12 +23,12 @@ if (isset($_GET['domain'])) {
     }
     else {
       echo "No such domain in context";
-      die();
+      exit();
     }
   }
   else {
     echo "Invalid domain name";
-    die();
+    exit();
   }
 }
 
@@ -376,8 +376,8 @@ foreach ($records as $record) {
     elseif ($current['type'] == 'TXT' &&
       stripos($current['txt'], 'v=dkim') === 0 &&
       stripos($record[2], 'v=dkim') === 0) {
-        preg_match('/v=DKIM1;.*k=rsa;.*p=(.*)/i', $current[$data_field[$current['type']]], $dkim_matches_current);
-        preg_match('/v=DKIM1;.*k=rsa;.*p=(.*)/i', $record[2], $dkim_matches_good);
+        preg_match('/v=DKIM1;.*k=rsa;.*p=([^;]*).*/i', $current[$data_field[$current['type']]], $dkim_matches_current);
+        preg_match('/v=DKIM1;.*k=rsa;.*p=([^;]*).*/i', $record[2], $dkim_matches_good);
         if ($dkim_matches_current[1] == $dkim_matches_good[1]) {
           $state = state_good;
         }
@@ -422,6 +422,6 @@ foreach ($records as $record) {
 <?php
 } else {
   echo "Session invalid";
-  die();
+  exit();
 }
 ?>
