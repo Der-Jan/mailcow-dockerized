@@ -436,7 +436,7 @@ function alertbox_log_parser($_data){
       else {
         $msg = $return['msg'];
       }
-      $log_array[] = array('msg' => json_encode($msg), 'type' => json_encode($type));
+      $log_array[] = array('msg' => $msg, 'type' => json_encode($type));
     }
     if (!empty($log_array)) { 
       return $log_array;
@@ -579,8 +579,10 @@ function check_login($user, $pass) {
 		}
 	}
 	$stmt = $pdo->prepare("SELECT `password` FROM `mailbox`
+      INNER JOIN domain on mailbox.domain = domain.domain
 			WHERE `kind` NOT REGEXP 'location|thing|group'
-        AND `active`='1'
+        AND `mailbox`.`active`='1'
+        AND `domain`.`active`='1'
         AND `username` = :user");
 	$stmt->execute(array(':user' => $user));
 	$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
