@@ -1,4 +1,7 @@
 <?php
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\SMTP;
+use PHPMailer\PHPMailer\Exception;
 function is_valid_regex($exp) {
   return @preg_match($exp, '') !== false;
 }
@@ -81,8 +84,35 @@ function ip_acl($ip, $networks) {
   return false;
 }
 function hash_password($password) {
-	$salt_str = bin2hex(openssl_random_pseudo_bytes(8));
-	return "{SSHA256}".base64_encode(hash('sha256', $password . $salt_str, true) . $salt_str);
+  // default_pass_scheme is determined in vars.inc.php (or corresponding local file)
+  // in case default pass scheme is not defined, falling back to BLF-CRYPT.
+  global $default_pass_scheme;
+  $pw_hash = NULL;
+  // support pre-hashed passwords
+  if (preg_match('/^{(ARGON2I|ARGON2ID|BLF-CRYPT|CLEAR|CLEARTEXT|CRYPT|DES-CRYPT|LDAP-MD5|MD5|MD5-CRYPT|PBKDF2|PLAIN|PLAIN-MD4|PLAIN-MD5|PLAIN-TRUNC|PLAIN-TRUNC|SHA|SHA1|SHA256|SHA256-CRYPT|SHA512|SHA512-CRYPT|SMD5|SSHA|SSHA256|SSHA512)}/i', $password)) {
+    $pw_hash = $password;
+  }
+  else {
+    switch (strtoupper($default_pass_scheme)) {
+      case "SSHA":
+        $salt_str = bin2hex(openssl_random_pseudo_bytes(8));
+        $pw_hash = "{SSHA}".base64_encode(hash('sha1', $password . $salt_str, true) . $salt_str);
+        break;
+      case "SSHA256":
+        $salt_str = bin2hex(openssl_random_pseudo_bytes(8));
+        $pw_hash = "{SSHA256}".base64_encode(hash('sha256', $password . $salt_str, true) . $salt_str);
+        break;
+      case "SSHA512":
+        $salt_str = bin2hex(openssl_random_pseudo_bytes(8));
+        $pw_hash = "{SSHA512}".base64_encode(hash('sha512', $password . $salt_str, true) . $salt_str);
+        break;
+      case "BLF-CRYPT":
+      default:
+        $pw_hash = "{BLF-CRYPT}" . password_hash($password, PASSWORD_BCRYPT);
+        break;
+    }
+  }
+  return $pw_hash;
 }
 function last_login($user) {
   global $pdo;
@@ -123,6 +153,7 @@ function sys_mail($_data) {
   $mailboxes = array();
   $mass_from = $_data['mass_from'];
   $mass_text = $_data['mass_text'];
+  $mass_html = $_data['mass_html'];
   $mass_subject = $_data['mass_subject'];
   if (!filter_var($mass_from, FILTER_VALIDATE_EMAIL)) {
 		$_SESSION['return'][] =  array(
@@ -182,7 +213,13 @@ function sys_mail($_data) {
     $mail->setFrom($mass_from);
     $mail->Subject = $mass_subject;
     $mail->CharSet ="UTF-8";
-    $mail->Body = $mass_text;
+    if (!empty($mass_html)) {
+      $mail->Body = $mass_html;
+      $mail->AltBody = $mass_text;
+    }
+    else {
+      $mail->Body = $mass_text;
+    }
     $mail->XMailer = 'MooMassMail';
     foreach ($rcpts as $rcpt) {
       $mail->AddAddress($rcpt);
@@ -312,6 +349,9 @@ function hasDomainAccess($username, $role, $domain) {
 }
 function hasMailboxObjectAccess($username, $role, $object) {
 	global $pdo;
+	if (empty($username) || empty($role) || empty($object)) {
+		return false;
+	}
 	if (!filter_var(html_entity_decode(rawurldecode($username)), FILTER_VALIDATE_EMAIL) && !ctype_alnum(str_replace(array('_', '.', '-'), '', $username))) {
 		return false;
 	}
@@ -354,6 +394,11 @@ function pem_to_der($pem_key) {
   unset($lines[count($lines)-1]);
   unset($lines[0]);
   return base64_decode(implode('', $lines));
+}
+function expand_ipv6($ip) {
+	$hex = unpack("H*hex", inet_pton($ip));
+	$ip = substr(preg_replace("/([A-f0-9]{4})/", "$1:", $hex['hex']), 0, -1);
+	return $ip;
 }
 function generate_tlsa_digest($hostname, $port, $starttls = null) {
   if (!is_valid_domain_name($hostname)) {
@@ -414,7 +459,7 @@ function generate_tlsa_digest($hostname, $port, $starttls = null) {
     return 'Error: Cannot read peer certificate';
   }
 }
-function alertbox_log_parser($_data){
+function alertbox_log_parser($_data) {
   global $lang;
   if (isset($_data['return'])) {
     foreach ($_data['return'] as $return) {
@@ -438,61 +483,97 @@ function alertbox_log_parser($_data){
       }
       $log_array[] = array('msg' => $msg, 'type' => json_encode($type));
     }
-    if (!empty($log_array)) { 
+    if (!empty($log_array)) {
       return $log_array;
     }
   }
   return false;
 }
+function verify_salted_hash($hash, $password, $algo, $salt_length) {
+  // Decode hash
+  $dhash = base64_decode($hash);
+  // Get first n bytes of binary which equals a SSHA hash
+  $ohash = substr($dhash, 0, $salt_length);
+  // Remove SSHA hash from decoded hash to get original salt string
+  $osalt = str_replace($ohash, '', $dhash);
+  // Check single salted SSHA hash against extracted hash
+  if (hash_equals(hash($algo, $password . $osalt, true), $ohash)) {
+    return true;
+  }
+  return false;
+}
 function verify_hash($hash, $password) {
-  if (preg_match('/^{SSHA256}/i', $hash)) {
-    // Remove tag if any
-    $hash = preg_replace('/^{SSHA256}/i', '', $hash);
-    // Decode hash
-    $dhash = base64_decode($hash);
-    // Get first 32 bytes of binary which equals a SHA256 hash
-    $ohash = substr($dhash, 0, 32);
-    // Remove SHA256 hash from decoded hash to get original salt string
-    $osalt = str_replace($ohash, '', $dhash);
-    // Check single salted SHA256 hash against extracted hash
-    if (hash_equals(hash('sha256', $password . $osalt, true), $ohash)) {
-      return true;
-    }
-  }
-  elseif (preg_match('/^{PLAIN-MD5}/i', $hash)) {
-    $hash = preg_replace('/^{PLAIN-MD5}/i', '', $hash);
-    if (md5($password) == $hash) {
-      return true;
-    }
-  }
-  elseif (preg_match('/^{SHA512-CRYPT}/i', $hash)) {
-    // Remove tag if any
-    $hash = preg_replace('/^{SHA512-CRYPT}/i', '', $hash);
-    // Decode hash
-    preg_match('/\\$6\\$(.*)\\$(.*)/i', $hash, $hash_array);
-    $osalt = $hash_array[1];
-    $ohash = $hash_array[2];
-    if (hash_equals(crypt($password, '$6$' . $osalt . '$'), $hash)) {
-      return true;
-    }
-  }
-  elseif (preg_match('/^{SSHA512}/i', $hash)) {
-    $hash = preg_replace('/^{SSHA512}/i', '', $hash);
-    // Decode hash
-    $dhash = base64_decode($hash);
-    // Get first 64 bytes of binary which equals a SHA512 hash
-    $ohash = substr($dhash, 0, 64);
-    // Remove SHA512 hash from decoded hash to get original salt string
-    $osalt = str_replace($ohash, '', $dhash);
-    // Check single salted SHA512 hash against extracted hash
-    if (hash_equals(hash('sha512', $password . $osalt, true), $ohash)) {
-      return true;
-    }
-  }
-  elseif (preg_match('/^{MD5-CRYPT}/i', $hash)) {
-    $hash = preg_replace('/^{MD5-CRYPT}/i', '', $hash);
-    if (password_verify($password, $hash)) {
-      return true;
+  if (preg_match('/^{(.+)}(.+)/i', $hash, $hash_array)) {
+    $scheme = strtoupper($hash_array[1]);
+    $hash = $hash_array[2];
+    switch ($scheme) {
+      case "ARGON2I":
+      case "ARGON2ID":
+      case "BLF-CRYPT":
+      case "CRYPT":
+      case "DES-CRYPT":
+      case "MD5-CRYPT":
+      case "MD5":
+      case "SHA256-CRYPT":
+      case "SHA512-CRYPT":
+        return password_verify($password, $hash);
+
+      case "CLEAR":
+      case "CLEARTEXT":
+      case "PLAIN":
+        return $password == $hash;
+
+      case "LDAP-MD5":
+        $hash = base64_decode($hash);
+        return hash_equals(hash('md5', $password, true), $hash);
+
+      case "PBKDF2":
+        $components = explode('$', $hash);
+        $salt = $components[2];
+        $rounds = $components[3];
+        $hash = $components[4];
+        return hash_equals(hash_pbkdf2('sha1', $password, $salt, $rounds), $hash);
+
+      case "PLAIN-MD4":
+        return hash_equals(hash('md4', $password), $hash);
+
+      case "PLAIN-MD5":
+        return md5($password) == $hash;
+
+      case "PLAIN-TRUNC":
+        $components = explode('-', $hash);
+        if (count($components) > 1) {
+          $trunc_len = $components[0];
+          $trunc_password = $components[1];
+
+          return substr($password, 0, $trunc_len) == $trunc_password;
+        } else {
+          return $password == $hash;
+        }
+
+      case "SHA":
+      case "SHA1":
+      case "SHA256":
+      case "SHA512":
+        // SHA is an alias for SHA1
+        $scheme = $scheme == "SHA" ? "sha1" : strtolower($scheme);
+        $hash = base64_decode($hash);
+        return hash_equals(hash($scheme, $password, true), $hash);
+
+      case "SMD5":
+        return verify_salted_hash($hash, $password, 'md5', 16);
+
+      case "SSHA":
+        return verify_salted_hash($hash, $password, 'sha1', 20);
+
+      case "SSHA256":
+        return verify_salted_hash($hash, $password, 'sha256', 32);
+
+      case "SSHA512":
+        return verify_salted_hash($hash, $password, 'sha512', 64);
+
+      default:
+        return false;
     }
   }
   return false;
@@ -721,7 +802,6 @@ function edit_user_account($_data) {
 	);
 }
 function user_get_alias_details($username) {
-	global $lang;
 	global $pdo;
   $data['direct_aliases'] = false;
   $data['shared_aliases'] = false;
@@ -793,7 +873,7 @@ function user_get_alias_details($username) {
   }
   return $data;
 }
-function is_valid_domain_name($domain_name) { 
+function is_valid_domain_name($domain_name) {
 	if (empty($domain_name)) {
 		return false;
 	}
@@ -803,7 +883,6 @@ function is_valid_domain_name($domain_name) {
 		   && preg_match("/^[^\.]{1,63}(\.[^\.]{1,63})*$/", $domain_name));
 }
 function set_tfa($_data) {
-	global $lang;
 	global $pdo;
 	global $yubi;
 	global $u2f;
@@ -832,7 +911,7 @@ function set_tfa($_data) {
     );
     return false;
   }
-  
+
 	switch ($_data["tfa_method"]) {
 		case "yubi_otp":
       $key_id = (!isset($_data["key_id"])) ? 'unidentified' : $_data["key_id"];
@@ -867,7 +946,7 @@ function set_tfa($_data) {
 			try {
         // We could also do a modhex translation here
         $yubico_modhex_id = substr($_data["otp_token"], 0, 12);
-        $stmt = $pdo->prepare("DELETE FROM `tfa` 
+        $stmt = $pdo->prepare("DELETE FROM `tfa`
           WHERE `username` = :username
             AND (`authmech` != 'yubi_otp')
             OR (`authmech` = 'yubi_otp' AND `secret` LIKE :modhex)");
@@ -918,20 +997,10 @@ function set_tfa($_data) {
 		case "totp":
       $key_id = (!isset($_data["key_id"])) ? 'unidentified' : $_data["key_id"];
       if ($tfa->verifyCode($_POST['totp_secret'], $_POST['totp_confirm_token']) === true) {
-        try {
         $stmt = $pdo->prepare("DELETE FROM `tfa` WHERE `username` = :username");
         $stmt->execute(array(':username' => $username));
         $stmt = $pdo->prepare("INSERT INTO `tfa` (`username`, `key_id`, `authmech`, `secret`, `active`) VALUES (?, ?, 'totp', ?, '1')");
         $stmt->execute(array($username, $key_id, $_POST['totp_secret']));
-        }
-        catch (PDOException $e) {
-          $_SESSION['return'][] =  array(
-            'type' => 'danger',
-            'log' => array(__FUNCTION__, $_data_log),
-            'msg' => array('mysql_error', $e)
-          );
-          return false;
-        }
         $_SESSION['return'][] =  array(
           'type' => 'success',
           'log' => array(__FUNCTION__, $_data_log),
@@ -947,18 +1016,150 @@ function set_tfa($_data) {
       }
 		break;
 		case "none":
-			try {
-				$stmt = $pdo->prepare("DELETE FROM `tfa` WHERE `username` = :username");
-				$stmt->execute(array(':username' => $username));
-			}
-			catch (PDOException $e) {
-				$_SESSION['return'][] =  array(
-					'type' => 'danger',
-          'log' => array(__FUNCTION__, $_data_log),
-					'msg' => array('mysql_error', $e)
-				);
-				return false;
-			}
+      $stmt = $pdo->prepare("DELETE FROM `tfa` WHERE `username` = :username");
+      $stmt->execute(array(':username' => $username));
+			$_SESSION['return'][] =  array(
+				'type' => 'success',
+        'log' => array(__FUNCTION__, $_data_log),
+				'msg' => array('object_modified', htmlspecialchars($username))
+			);
+		break;
+	}
+}
+function fido2($_data) {
+	global $pdo;
+  $_data_log = $_data;
+  // Not logging registration data, only actions
+  // Silent errors for "get" requests
+	switch ($_data["action"]) {
+		case "register":
+      $username = $_SESSION['mailcow_cc_username'];
+      if ($_SESSION['mailcow_cc_role'] != "domainadmin" &&
+        $_SESSION['mailcow_cc_role'] != "admin") {
+          $_SESSION['return'][] =  array(
+            'type' => 'danger',
+            'log' => array(__FUNCTION__, $_data["action"]),
+            'msg' => 'access_denied'
+          );
+          return false;
+      }
+      $stmt = $pdo->prepare("INSERT INTO `fido2` (`username`, `rpId`, `credentialPublicKey`, `certificateChain`, `certificate`, `certificateIssuer`, `certificateSubject`, `signatureCounter`, `AAGUID`, `credentialId`)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+      $stmt->execute(array(
+        $username,
+        $_data['registration']->rpId,
+        $_data['registration']->credentialPublicKey,
+        $_data['registration']->certificateChain,
+        $_data['registration']->certificate,
+        $_data['registration']->certificateIssuer,
+        $_data['registration']->certificateSubject,
+        $_data['registration']->signatureCounter,
+        $_data['registration']->AAGUID,
+        $_data['registration']->credentialId)
+      );
+      $_SESSION['return'][] =  array(
+        'type' => 'success',
+        'log' => array(__FUNCTION__, $_data["action"]),
+        'msg' => array('object_modified', $username)
+      );
+		break;
+		case "get_user_cids":
+      // Used to exclude existing CredentialIds while registering
+      $username = $_SESSION['mailcow_cc_username'];
+      if ($_SESSION['mailcow_cc_role'] != "domainadmin" &&
+        $_SESSION['mailcow_cc_role'] != "admin") {
+          return false;
+      }
+      $stmt = $pdo->prepare("SELECT `credentialId` FROM `fido2` WHERE `username` = :username");
+      $stmt->execute(array(':username' => $username));
+      $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+      while($row = array_shift($rows)) {
+        $cids[] = $row['credentialId'];
+      }
+      return $cids;
+		break;
+		case "get_all_cids":
+      // Only needed when using fido2 with username
+      $stmt = $pdo->query("SELECT `credentialId` FROM `fido2`");
+      $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+      while($row = array_shift($rows)) {
+        $cids[] = $row['credentialId'];
+      }
+      return $cids;
+		break;
+    case "get_by_b64cid":
+      if (!isset($_data['cid']) || empty($_data['cid'])) {
+        return false;
+      }
+      $stmt = $pdo->prepare("SELECT `certificateSubject`, `username`, `credentialPublicKey`, SHA2(`credentialId`, 256) AS `cid` FROM `fido2` WHERE TO_BASE64(`credentialId`) = :cid");
+      $stmt->execute(array(':cid' => $_data['cid']));
+      $row = $stmt->fetch(PDO::FETCH_ASSOC);
+      if (empty($row) || empty($row['credentialPublicKey']) || empty($row['username'])) {
+        return false;
+      }
+      $data['pub_key'] = $row['credentialPublicKey'];
+      $data['username'] = $row['username'];
+      $data['subject'] = $row['certificateSubject'];
+      $data['cid'] = $row['cid'];
+      return $data;
+		break;
+		case "get_friendly_names":
+      $username = $_SESSION['mailcow_cc_username'];
+      if ($_SESSION['mailcow_cc_role'] != "domainadmin" &&
+        $_SESSION['mailcow_cc_role'] != "admin") {
+          return false;
+      }
+      $stmt = $pdo->prepare("SELECT SHA2(`credentialId`, 256) AS `cid`, `created`, `certificateSubject`, `friendlyName` FROM `fido2` WHERE `username` = :username");
+      $stmt->execute(array(':username' => $username));
+      $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+      while($row = array_shift($rows)) {
+        $fns[] = array(
+          "subject" => (empty($row['certificateSubject']) ? 'Unknown (' . $row['created'] . ')' : $row['certificateSubject']),
+          "fn" => $row['friendlyName'],
+          "cid" => $row['cid']
+        );
+      }
+      return $fns;
+		break;
+		case "unset_fido2_key":
+      $username = $_SESSION['mailcow_cc_username'];
+      if ($_SESSION['mailcow_cc_role'] != "domainadmin" &&
+        $_SESSION['mailcow_cc_role'] != "admin") {
+          $_SESSION['return'][] =  array(
+            'type' => 'danger',
+            'log' => array(__FUNCTION__, $_data["action"]),
+            'msg' => 'access_denied'
+          );
+          return false;
+      }
+      $stmt = $pdo->prepare("DELETE FROM `fido2` WHERE `username` = :username AND SHA2(`credentialId`, 256) = :cid");
+      $stmt->execute(array(
+        ':username' => $username,
+        ':cid' => $_data['post_data']['unset_fido2_key']
+      ));
+			$_SESSION['return'][] =  array(
+				'type' => 'success',
+        'log' => array(__FUNCTION__, $_data_log),
+				'msg' => array('object_modified', htmlspecialchars($username))
+			);
+		break;
+    case "edit_fn":
+      $username = $_SESSION['mailcow_cc_username'];
+      if ($_SESSION['mailcow_cc_role'] != "domainadmin" &&
+        $_SESSION['mailcow_cc_role'] != "admin") {
+          $_SESSION['return'][] =  array(
+            'type' => 'danger',
+            'log' => array(__FUNCTION__, $_data["action"]),
+            'msg' => 'access_denied'
+          );
+          return false;
+      }
+      $stmt = $pdo->prepare("UPDATE `fido2` SET `friendlyName` = :friendlyName WHERE SHA2(`credentialId`, 256) = :cid AND `username` = :username");
+      $stmt->execute(array(
+        ':username' => $username,
+        ':friendlyName' => $_data['fido2_attrs']['fido2_fn'],
+        ':cid' => $_data['fido2_attrs']['fido2_cid']
+      ));
 			$_SESSION['return'][] =  array(
 				'type' => 'success',
         'log' => array(__FUNCTION__, $_data_log),
@@ -1034,7 +1235,7 @@ function get_tfa($username = null) {
       WHERE `username` = :username AND `active` = '1'");
   $stmt->execute(array(':username' => $username));
   $row = $stmt->fetch(PDO::FETCH_ASSOC);
-  
+
 	switch ($row["authmech"]) {
 		case "yubi_otp":
       $data['name'] = "yubi_otp";
@@ -1089,7 +1290,6 @@ function get_tfa($username = null) {
 }
 function verify_tfa_login($username, $token) {
 	global $pdo;
-	global $lang;
 	global $yubi;
 	global $u2f;
 	global $tfa;
@@ -1097,7 +1297,7 @@ function verify_tfa_login($username, $token) {
       WHERE `username` = :username AND `active` = '1'");
   $stmt->execute(array(':username' => $username));
   $row = $stmt->fetch(PDO::FETCH_ASSOC);
-  
+
 	switch ($row["authmech"]) {
 		case "yubi_otp":
 			if (!ctype_alnum($token) || strlen($token) != 44) {
@@ -1223,7 +1423,6 @@ function verify_tfa_login($username, $token) {
 }
 function admin_api($access, $action, $data = null) {
 	global $pdo;
-	global $lang;
 	if ($_SESSION['mailcow_cc_role'] != "admin") {
 		$_SESSION['return'][] =  array(
 			'type' => 'danger',
@@ -1411,7 +1610,6 @@ function license($action, $data = null) {
   }
 }
 function rspamd_ui($action, $data = null) {
-	global $lang;
 	if ($_SESSION['mailcow_cc_role'] != "admin") {
 		$_SESSION['return'][] =  array(
 			'type' => 'danger',
@@ -1486,7 +1684,7 @@ function get_u2f_registrations($username) {
 }
 function get_logs($application, $lines = false) {
   if ($lines === false) {
-    $lines = $GLOBALS['LOG_LINES'] - 1; 
+    $lines = $GLOBALS['LOG_LINES'] - 1;
   }
   elseif(is_numeric($lines) && $lines >= 1) {
     $lines = abs(intval($lines) - 1);
@@ -1497,7 +1695,6 @@ function get_logs($application, $lines = false) {
     $to = intval($to);
     if ($from < 1 || $to < $from) { return false; }
   }
-	global $lang;
 	global $redis;
 	global $pdo;
 	if ($_SESSION['mailcow_cc_role'] != "admin") {
@@ -1667,6 +1864,20 @@ function get_logs($application, $lines = false) {
       $data_array = json_decode($history, true);
       curl_close($curl);
       return $data_array['rows'];
+    }
+    curl_close($curl);
+    return false;
+  }
+  if ($application == "rspamd-stats") {
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_UNIX_SOCKET_PATH, '/var/lib/rspamd/rspamd.sock');
+    curl_setopt($curl, CURLOPT_URL,"http://rspamd/stat");
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+    $stats = curl_exec($curl);
+    if (!curl_errno($curl)) {
+      $data_array = json_decode($stats, true);
+      curl_close($curl);
+      return $data_array;
     }
     curl_close($curl);
     return false;
