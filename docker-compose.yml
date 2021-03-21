@@ -17,7 +17,7 @@ services:
             - unbound
 
     mysql-mailcow:
-      image: mariadb:10.4
+      image: mariadb:10.5
       depends_on:
         - unbound-mailcow
       stop_grace_period: 45s
@@ -56,7 +56,7 @@ services:
             - redis
 
     clamd-mailcow:
-      image: mailcow/clamd:1.38
+      image: mailcow/clamd:1.39
       restart: always
       dns:
         - ${IPV4_NETWORK:-172.22.1}.254
@@ -166,7 +166,7 @@ services:
             - phpfpm
 
     sogo-mailcow:
-      image: mailcow/sogo:1.95
+      image: mailcow/sogo:1.96
       environment:
         - DBNAME=${DBNAME}
         - DBUSER=${DBUSER}
@@ -202,7 +202,7 @@ services:
             - sogo
 
     dovecot-mailcow:
-      image: mailcow/dovecot:1.141
+      image: mailcow/dovecot:1.142
       depends_on:
         - mysql-mailcow
       dns:
@@ -437,7 +437,7 @@ services:
         - /lib/modules:/lib/modules:ro
 
     watchdog-mailcow:
-      image: mailcow/watchdog:1.90
+      image: mailcow/watchdog:1.91
       # Debug
       #command: /watchdog.sh
       dns:
