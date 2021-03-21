@@ -91,6 +91,8 @@ services:
         - ./data/conf/rspamd/rspamd.conf.local:/etc/rspamd/rspamd.conf.local:Z
         - ./data/conf/rspamd/rspamd.conf.override:/etc/rspamd/rspamd.conf.override:Z
         - rspamd-vol-1:/var/lib/rspamd:z
+      ports:
+        - 11333:11333 # for bsd to use rspamd
       restart: always
       hostname: rspamd
       dns:
