@@ -7,3 +7,4 @@ dns {
   retransmits = 2;
 }
 disable_monitoring = true;
+control_socket = "$DBDIR/rspamd-control.sock mode=0600";
