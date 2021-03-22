@@ -194,6 +194,12 @@ services:
         - mysql-socket-vol-1:/var/run/mysqld/:z
         - sogo-web-vol-1:/sogo_web:z
         - sogo-userdata-backup-vol-1:/sogo_backup:Z
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.sogo.rule=Host(`${MAILCOW_HOSTNAME}`,`sogo.${MAILCOW_DOMAINNAME}`)&&PathPrefix(`/SOGo`)
+        - traefik.http.routers.sogo.entrypoints=websecure
+        - traefik.http.routers.sogo.service=sogo
+        - traefik.http.services.sogo.loadbalancer.server.port=20000
       restart: always
       networks:
         mailcow-network:
@@ -359,12 +365,12 @@ services:
       labels:
         - traefik.enable=true
         - traefik.http.routers.moo.rule=Host(`${MAILCOW_HOSTNAME}`,`autodiscover.${MAILCOW_DOMAINNAME}`,`autoconfig.${MAILCOW_DOMAINNAME}`,`mailcow.${MAILCOW_DOMAINNAME}`,`sogo.${MAILCOW_DOMAINNAME}`)
-        # Creates a service called "moo" for the container, and specifies which internal port of the container
-        #   should traefik route the incoming data to.
-        - traefik.http.services.moo.loadbalancer.server.port=${HTTP_PORT:-80}
-        # Specifies which entrypoint (external port) should traefik listen to, for this container.
-        #   websecure being port 443, check the traefik.toml file liked above.
         - traefik.http.routers.moo.entrypoints=websecure,web
+        - traefik.http.routers.moo.service=moo
+        - traefik.http.routers.moo.middlewares=sogo
+        - traefik.http.services.moo.loadbalancer.server.port=${HTTP_PORT:-80}
+        - traefik.http.middlewares.sogo.redirectregex.regex=https?://(sogo.${MAILCOW_DOMAINNAME}/)$$
+        - traefik.http.middlewares.sogo.redirectregex.replacement=https://$${1}SOGo/
 
     custom-certs-dumper:
       image: humenius/traefik-certs-dumper
