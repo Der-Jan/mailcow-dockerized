@@ -196,7 +196,7 @@ services:
         - sogo-userdata-backup-vol-1:/sogo_backup:Z
       labels:
         - traefik.enable=true
-        - traefik.http.routers.sogo.rule=Host(`${MAILCOW_HOSTNAME}`,`sogo.${MAILCOW_DOMAINNAME}`)&&PathPrefix(`/SOGo`)
+        - traefik.http.routers.sogo.rule=Host(`${MAILCOW_HOSTNAME}`,`sogo.${MAILCOW_DOMAINNAME}`)&&PathPrefix(`/SOGo/`)
         - traefik.http.routers.sogo.entrypoints=websecure
         - traefik.http.routers.sogo.service=sogo
         - traefik.http.routers.sogo.priority=100
