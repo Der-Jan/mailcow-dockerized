@@ -199,6 +199,7 @@ services:
         - traefik.http.routers.sogo.rule=Host(`${MAILCOW_HOSTNAME}`,`sogo.${MAILCOW_DOMAINNAME}`)&&PathPrefix(`/SOGo`)
         - traefik.http.routers.sogo.entrypoints=websecure
         - traefik.http.routers.sogo.service=sogo
+        - traefik.http.routers.sogo.priority=100
         - traefik.http.services.sogo.loadbalancer.server.port=20000
       restart: always
       networks:
@@ -368,6 +369,7 @@ services:
         - traefik.http.routers.moo.entrypoints=websecure,web
         - traefik.http.routers.moo.service=moo
         - traefik.http.routers.moo.middlewares=sogo
+        - traefik.http.routers.moo.priority=50
         - traefik.http.services.moo.loadbalancer.server.port=${HTTP_PORT:-80}
         - traefik.http.middlewares.sogo.redirectregex.regex=https?://(sogo.${MAILCOW_DOMAINNAME}/)$$
         - traefik.http.middlewares.sogo.redirectregex.replacement=https://$${1}SOGo/
